@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>สิงโตในกรง</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#fff4d6;--fg:#4a3320;--wood:#a8743c;--floor:#fffaf0;--btn:#e8833a;--btnfg:#fff;--card:#ffffffaa}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#2a2118;--fg:#f6e7cf;--wood:#8a5d2f;--floor:#3b3024;--btn:#d9722b;--card:#00000040}}
+:root[data-theme="dark"]{--bg:#2a2118;--fg:#f6e7cf;--wood:#8a5d2f;--floor:#3b3024;--btn:#d9722b;--card:#00000040}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"Noto Sans Thai","Sarabun",system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:14px 10px;user-select:none;-webkit-user-select:none}
+h1{font-size:1.4rem;margin:0 0 4px}
+.info{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:6px 0 10px;font-size:.95rem}
+.info span{background:var(--card);padding:4px 10px;border-radius:20px}
+#board{position:relative;background:var(--floor);border:8px solid var(--wood);border-bottom:none;border-radius:12px 12px 0 0;touch-action:none}
+.bar{position:absolute;bottom:-8px;height:8px;background:var(--wood)}
+#goal{position:absolute;border:3px dashed var(--btn);border-radius:10px;display:flex;align-items:flex-end;justify-content:center;font-size:2rem;opacity:.8}
+.p{position:absolute;border-radius:12px;cursor:grab;transition:left .12s,top .12s;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -4px 0 #0003,0 2px 4px #0003}
+.V{background:#6f96e0}.H{background:#f0b255}.S{background:#86cb98}
+.C{background:#d9a441;overflow:hidden}
+.C::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,#6b4a1e 0 5px,transparent 5px 22%);transition:opacity .5s;z-index:2}
+.C.open::before{opacity:0}.C.open .l{opacity:0}
+.l{position:relative;display:block;line-height:0}.l svg{width:100%;height:100%}
+.p::after{content:"";position:absolute;inset:6px;border:2px dashed #fff6;border-radius:8px;pointer-events:none}
+.C::after{display:none}
+#lion{position:fixed;left:0;top:0;line-height:0;pointer-events:none;display:none;z-index:50;will-change:transform}
+#msg{min-height:28px;margin:10px 0 4px;font-weight:700;text-align:center}
+button{background:var(--btn);color:var(--btnfg);border:0;border-radius:24px;padding:10px 20px;font:inherit;font-weight:700;cursor:pointer;margin:3px}
+button.sec{background:var(--card);color:var(--fg)}
+#next{display:none}
+.hint{font-size:.85rem;opacity:.75;margin-top:6px;text-align:center}
+</style>
+</head>
+<body>
+<h1>🦁 ปล่อยสิงโตออกจากกรง</h1>
+<div class="info"><span id="iLevel"></span><span id="iDiff"></span><span id="iMoves"></span></div>
+<div id="board"><div id="goal">🔑</div></div>
+<div id="msg"></div>
+<div><button id="next">ด่านต่อไป ▶</button><button class="sec" id="restart">เริ่มด่านนี้ใหม่</button></div>
+<div class="hint">ลากบล็อกเพื่อเลื่อน พากรงลงไปที่ช่องกุญแจด้านล่าง</div>
+<div id="lion"></div>
+<script>
+const R=5,C=4,SZ={C:[2,2],V:[1,2],H:[2,1],S:[1,1]};
+const board=document.getElementById('board'),lion=document.getElementById('lion');
+let level=1,pieces=[],start=[],els=[],cell=80,moves=0,optimal=0,won=false,drag=null;
+let mx=innerWidth/2,my=innerHeight/2,lx=0,ly=0,raf=0,lastDir=1;
+const rnd=n=>Math.floor(Math.random()*n);
+
+function grid(ps,skip){const g=new Array(R*C).fill(0);ps.forEach((p,i)=>{if(i===skip)return;const[w,h]=SZ[p.t];for(let a=0;a<h;a++)for(let b=0;b<w;b++)g[(p.r+a)*C+p.c+b]=1});return g}
+function canMove(ps,i,dr,dc){const p=ps[i],[w,h]=SZ[p.t],nr=p.r+dr,nc=p.c+dc;
+ if(nr<0||nc<0||nr+h>R||nc+w>C)return false;const g=grid(ps,i);
+ for(let a=0;a<h;a++)for(let b=0;b<w;b++)if(g[(nr+a)*C+nc+b])return false;return true}
+const key=ps=>ps.map(p=>p.t+p.r+p.c).sort().join('');
+const D4=[[1,0],[-1,0],[0,1],[0,-1]];
+
+function layout(ne){
+ const occ=new Array(R*C).fill(0);[[3,1],[3,2],[4,1],[4,2]].forEach(([r,c])=>occ[r*C+c]=1);
+ let n=0;while(n<ne){const i=rnd(R*C);if(!occ[i]){occ[i]=2;n++}}
+ const ps=[{t:'C',r:3,c:1}];
+ for(let i=0;i<R*C;i++){if(occ[i])continue;const r=Math.floor(i/C),c=i%C,x=Math.random();
+  const order=x<.45?['V','H','S']:x<.75?['H','V','S']:['S','V','H'];
+  for(const t of order){
+   if(t==='V'&&r+1<R&&!occ[i+C]){occ[i]=occ[i+C]=1;ps.push({t,r,c});break}
+   if(t==='H'&&c+1<C&&!occ[i+1]){occ[i]=occ[i+1]=1;ps.push({t,r,c});break}
+   if(t==='S'){occ[i]=1;ps.push({t,r,c});break}}}
+ return ps}
+
+function free(ps,g,i,dr,dc){const p=ps[i],[w,h]=SZ[p.t],nr=p.r+dr,nc=p.c+dc;if(nr<0||nc<0||nr+h>R||nc+w>C)return false;for(let a=0;a<h;a++)for(let b=0;b<w;b++){const rr=nr+a,cc=nc+b;if(g[rr*C+cc]&&!(rr>=p.r&&rr<p.r+h&&cc>=p.c&&cc<p.c+w))return false}return true}
+function bfs(s0,maxD){
+ const seen=new Set([key(s0)]),all=[{ps:s0,d:0}];
+ for(let q=0;q<all.length&&all.length<30000;q++){
+  const{ps,d}=all[q];if(d>=maxD)continue;const g=grid(ps,-1);
+  for(let i=0;i<ps.length;i++)for(const[dr,dc]of D4){
+   if(!free(ps,g,i,dr,dc))continue;
+   const np=ps.map((p,j)=>j===i?{t:p.t,r:p.r+dr,c:p.c+dc}:p);
+   const k=key(np);if(seen.has(k))continue;seen.add(k);all.push({ps:np,d:d+1})}}
+ return all}
+
+function targetFor(L){return Math.max(4,Math.min(12+(L-1)*5,70)+rnd(5)-2)}
+function diffLabel(t){return t<12?'ง่ายมาก':t<25?'ง่าย':t<40?'ปานกลาง':t<55?'ยาก':'ยากมาก'}
+
+function makeLevel(L){
+ const t=targetFor(L);let best=null,bs=1e9;
+ for(let a=0;a<80&&(!best||bs>2);a++){
+  const all=bfs(layout(Math.max(2,7-L)),t+12).filter(s=>s.ps[0].r===0);
+  if(!all.length)continue;
+  const m=all.reduce((x,s)=>Math.min(x,Math.abs(s.d-t)),1e9);
+  const pool=all.filter(s=>Math.abs(s.d-t)===m);
+  if(m<bs){bs=m;best=pool[rnd(pool.length)]}}
+ return{ps:best.ps,d:best.d,t}}
+
+function sizeCell(){cell=Math.max(46,Math.min(88,Math.floor((innerWidth-50)/C),Math.floor((innerHeight-270)/R)));
+ board.style.width=(C*cell+16)+'px';board.style.height=(R*cell+8)+'px';
+ const g=document.getElementById('goal');Object.assign(g.style,{left:cell+'px',top:3*cell+'px',width:2*cell+'px',height:2*cell+'px'});
+ board.querySelectorAll('.bar').forEach(b=>b.remove());
+ [0,3].forEach(c=>{const b=document.createElement('div');b.className='bar';b.style.left=(c*cell)+'px';b.style.width=cell+'px';board.appendChild(b)});
+ place()}
+function place(){pieces.forEach((p,i)=>{const[w,h]=SZ[p.t],e=els[i];
+ Object.assign(e.style,{left:p.c*cell+3+'px',top:p.r*cell+3+'px',width:w*cell-6+'px',height:h*cell-6+'px'})});
+ const c=els[0];if(c){const l=c.querySelector('.l');l.style.width=l.style.height=cell*1.7+'px'}}
+
+function build(){
+ board.querySelectorAll('.p').forEach(e=>e.remove());els=[];
+ pieces.forEach((p,i)=>{const e=document.createElement('div');e.className='p '+p.t;
+  if(p.t==='C')e.innerHTML='<span class="l">'+lionSVG(2,false,0)+'</span>';
+  e.addEventListener('pointerdown',ev=>{if(won)return;drag={i,x:ev.clientX,y:ev.clientY,axis:null,min:0,max:0,off:0};e.style.cursor='grabbing';ev.preventDefault()});
+  board.appendChild(e);els.push(e)});
+ sizeCell()}
+
+function info(){iLevel.textContent='ด่าน '+level;iDiff.textContent='ระดับ: '+diffLabel(optimal);
+ iMoves.textContent='เดิน '+moves+' ครั้ง (ต่ำสุด '+optimal+')'}
+function load(ps){pieces=ps.map(p=>({...p}));moves=0;won=false;
+ lion.style.display='none';cancelAnimationFrame(raf);next.style.display='none';msg.textContent='';build();info()}
+function newLevel(){const L=makeLevel(level);start=L.ps.map(p=>({...p}));optimal=L.d;load(start)}
+
+addEventListener('pointermove',e=>{mx=e.clientX;my=e.clientY;
+ if(!drag||won)return;
+ const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
+ if(!drag.axis){if(Math.max(Math.abs(dx),Math.abs(dy))<6)return;
+  drag.axis=Math.abs(dx)>=Math.abs(dy)?'x':'y';
+  const i=drag.i,s=drag.axis==='x'?[0,1]:[1,0];
+  const cnt=k=>{let n=0;const t=pieces.map(p=>({...p}));while(canMove(t,i,s[0]*k,s[1]*k)){t[i].r+=s[0]*k;t[i].c+=s[1]*k;n++}return n};
+  drag.min=-cnt(-1)*cell;drag.max=cnt(1)*cell;els[i].style.transition='none'}
+ const raw=drag.axis==='x'?dx:dy;
+ drag.off=Math.max(drag.min,Math.min(drag.max,raw));
+ const p=pieces[drag.i],el=els[drag.i];
+ if(drag.axis==='x')el.style.left=p.c*cell+3+drag.off+'px';else el.style.top=p.r*cell+3+drag.off+'px'});
+function endDrag(){if(!drag)return;const d=drag;drag=null;els.forEach(e=>e.style.cursor='grab');
+ if(!d.axis)return;
+ const n=Math.round(d.off/cell),p=pieces[d.i];els[d.i].style.transition='';
+ if(n){if(d.axis==='x')p.c+=n;else p.r+=n;moves+=Math.abs(n)}
+ place();info();if(n)checkWin()}
+addEventListener('pointerup',endDrag);addEventListener('pointercancel',endDrag);
+
+function checkWin(){const c=pieces[0];if(c.r!==3||c.c!==1)return;
+ won=true;drag=null;els[0].classList.add('open');
+ const b=els[0].getBoundingClientRect();lx=b.left+b.width/2;ly=b.top+b.height/2;
+ lion.style.width=lion.style.height=cell*1.8+'px';lIdx=2;lMove=false;lt=0;lKey='';lion.style.display='block';
+ msg.textContent='สิงโตหลุดแล้ว! ลองขยับเมาส์ดูสิ 🎉';next.style.display='inline-block';loop()}
+let lIdx=2,lMove=false,lt=0,lKey='';
+function lionSVG(idx,mv,ph){
+ const a=idx*Math.PI/4,hx=Math.cos(a),hy=Math.sin(a),px=-hy,py=hx;
+ const M='#f2b84b',D='#d9953a',N='#b9692b',L='#fde7a8',K='#3a2415',f=n=>n.toFixed(1);
+ const ln=(p,q,w,c)=>`<line x1="${f(p[0])}" y1="${f(p[1])}" x2="${f(q[0])}" y2="${f(q[1])}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/>`;
+ const ci=(p,r,c,o)=>`<circle cx="${f(p[0])}" cy="${f(p[1])}" r="${r}" fill="${c}"${o?' opacity="'+o+'"':''}/>`;
+ const it=[];let hc;
+ if(!mv){
+  const b=ph?1:0,hp=[60-hx*8,86-hy*3],cp=[60+hx*3,67];
+  it.push([70,ln(hp,cp,28,M)]);
+  const tip=[hp[0]-hx*22+(1-Math.abs(hx))*24,95];
+  it.push([70-hy*30,`<path d="M${f(hp[0])} ${f(hp[1]+6)} Q${f(hp[0]-hx*16)} 100 ${f(tip[0])} ${f(tip[1])}" fill="none" stroke="${D}" stroke-width="4" stroke-linecap="round"/>`+ci(tip,4.5,N)]);
+  for(const s of[-1,1]){
+   const hz=[hp[0]+s*px*11,hp[1]+1+s*py*4];
+   it.push([hz[1]+5,ci(hz,10.5,D)+ci([hz[0]+hx*7+s*px*3,97+s*py*3.5+hy*3],5.2,L)]);
+   const top=[cp[0]+s*px*5,78+s*py*3],paw=[top[0]+hx*3,96+s*py*3+hy*2];
+   it.push([paw[1]+8,ln(top,paw,8,D)+ci(paw,4.6,L)])}
+  hc=[cp[0]+hx*4,45+b];
+ }else{
+  const bob=Math.abs(Math.sin(ph))*2.5,cy=68-bob,R=[60-hx*19,cy-hy*8],F=[60+hx*19,cy+hy*8];
+  it.push([cy,ln(R,F,24,M)]);
+  for(const[E,e]of[[R,-1],[F,1]])for(const s of[-1,1]){
+   const q=ph+(s*e>0?0:Math.PI),sw=Math.sin(q)*7,lf=Math.max(0,Math.cos(q))*4;
+   const hip=[E[0]+s*px*6,E[1]+6+s*py*2.7],paw=[hip[0]+hx*sw,hip[1]+hy*sw*.45+19-lf];
+   it.push([hip[1],ln(hip,paw,7,D)+ci(paw,4.2,L)])}
+  const wg=Math.sin(ph*2)*3,tp=[R[0]-hx*14+wg,R[1]-hy*6-19];
+  it.push([R[1]-3,`<path d="M${f(R[0])} ${f(R[1])} Q${f(R[0]-hx*17)} ${f(R[1]-hy*7-3)} ${f(tp[0])} ${f(tp[1])}" fill="none" stroke="${D}" stroke-width="4" stroke-linecap="round"/>`+ci(tp,4.5,N)]);
+  hc=[F[0]+hx*5,F[1]-17];
+ }
+ let h='';
+ for(let k=0;k<8;k++)h+=ci([hc[0]+Math.cos(k*Math.PI/4)*13,hc[1]+Math.sin(k*Math.PI/4)*13],7,N);
+ h+=ci(hc,14,N)+ci([hc[0]-9,hc[1]-11],4.5,M)+ci([hc[0]+9,hc[1]-11],4.5,M)+ci([hc[0]-9,hc[1]-11],2,L)+ci([hc[0]+9,hc[1]-11],2,L);
+ if(hy>-.35){
+  const fx=hc[0]+hx*3,ex=hc[0]+hx*7,sp=4.6*(1-Math.abs(hx)*.55),y=hc[1];
+  h+=ci([fx,y+1],11.5,M)+ci([ex,y+5],5.6,L)+ci([ex-sp,y-1.5],1.9,K)+ci([ex+sp,y-1.5],1.9,K)+ci([ex-sp-3.5,y+3],2.2,'#ff8fa3',.5)+ci([ex+sp+3.5,y+3],2.2,'#ff8fa3',.5)+ci([hc[0]+hx*8,y+3.8],1.8,K);
+  if(hy>.5)h+=`<path d="M${f(ex-2.2)} ${f(y+7)} Q${f(ex)} ${f(y+9.5)} ${f(ex+2.2)} ${f(y+7)}" fill="none" stroke="${K}" stroke-width="1" stroke-linecap="round"/>`;
+ }else h+=ci([hc[0],hc[1]-1],11,'#c97a30');
+ return `<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><ellipse cx="60" cy="100" rx="30" ry="6" fill="#0003"/>${it.sort((p,q)=>p[0]-q[0]).map(x=>x[1]).join('')}${h}</svg>`}
+function loop(ts){ts=ts||performance.now();const dt=Math.min(.05,(ts-lt)/1000||.016);lt=ts;
+ const sz=cell*1.8,stop=sz*.45,dx=mx-lx,dy=my-ly,d=Math.hypot(dx,dy);
+ if(d>stop+12)lMove=true;else if(d<=stop)lMove=false;
+ if(lMove){lIdx=((Math.round(Math.atan2(dy,dx)/(Math.PI/4))%8)+8)%8;const s=Math.max(0,Math.min(d-stop+1,cell*5*dt));lx+=dx/d*s;ly+=dy/d*s}
+ const fr=lMove?Math.floor(ts/70)%6:Math.floor(ts/600)%2,k=lIdx+'|'+lMove+'|'+fr;
+ if(k!==lKey){lKey=k;lion.innerHTML=lionSVG(lIdx,lMove,lMove?fr*Math.PI/3:fr)}
+ lion.style.transform=`translate(${lx}px,${ly}px) translate(-50%,-50%)`;
+ raf=requestAnimationFrame(loop)}
+
+const iLevel=document.getElementById('iLevel'),iDiff=document.getElementById('iDiff'),iMoves=document.getElementById('iMoves'),msg=document.getElementById('msg'),next=document.getElementById('next'),restart=document.getElementById('restart');
+next.onclick=()=>{level++;newLevel()};
+restart.onclick=()=>load(start);
+addEventListener('resize',()=>{if(pieces.length)sizeCell()});
+newLevel();
+</script>
+</body>
+</html>
